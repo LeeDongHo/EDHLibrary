@@ -499,7 +499,7 @@ void LanServer::completeSend(LONG _trans, lanSession *_ss)
 
 void LanServer::clientShutdown(lanSession *_ss)
 {
-	InterlockedExchange((LONG*)&_ss->disconnectFlag, 1);
+	InterlockedExchange(&_ss->disconnectFlag, 1);
 	shutdown(_ss->Sock, SD_BOTH);
 	return;
 }
@@ -581,6 +581,7 @@ void LanServer::clientShutdown(unsigned __int64 _id)
 	lanSession *_ss = acquirLock(_id);
 	if (_ss)
 	{
+		InterlockedExchange((LONG*)&(_ss->disconnectFlag), 1);
 		shutdown(_ss->Sock, SD_BOTH);
 		releaseLock(_ss);
 	}

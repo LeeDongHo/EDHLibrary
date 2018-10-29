@@ -46,7 +46,7 @@ public:
 
 	void setDB(const char *_host, const  char *_user, const  char *_pass, const char *_dbName, const int _port);
 
-	bool updateQuery(const std::string _string);
+	bool Query(const std::string _string);
 	bool selectQuery(const std::string _string);
 
 	MYSQL_ROW fetchRow();

@@ -8,9 +8,7 @@ struct lanSession
 		Sock = INVALID_SOCKET;
 		Index = 0;
 
-		recvFlag = 0;
 		sendFlag = 0;
-		usingFlag = 0;
 		disconnectFlag = 0;
 		sendCount = 0;
 	}
@@ -20,9 +18,7 @@ struct lanSession
 
 	// IOCP 작업 관련 변수들
 
-	LONG recvFlag;				// Recv 중인지 체크. 
 	LONG sendFlag;				// send 중인 지 체크.
-	LONG usingFlag;				// 어떤 스레드에서 세션을 사용하고 있는지 체크.
 	LONG afterSendingDisconnect;
 	LONG disconnectFlag;		// disconnect 체크
 

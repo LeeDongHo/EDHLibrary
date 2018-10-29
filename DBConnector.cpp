@@ -49,7 +49,7 @@ void mysqlConnector::disconnect()
 	con = NULL;
 }
 
-bool mysqlConnector::updateQuery(const std::string	_string)
+bool mysqlConnector::Query(const std::string	_string)
 {
 	int count = 0;
 	unsigned int lastError = 0;

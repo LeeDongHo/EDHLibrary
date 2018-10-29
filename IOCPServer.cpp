@@ -165,15 +165,13 @@ void IOCPServer::SendPacket(unsigned __int64 _index, Sbuf *_buf, bool _type)
 			clientShutdown(ss->Index);
 	}
 
-	if (ss->sendFlag == false)
+	if (ss->sendFlag == false && ss->sendPQCS == false)
 	{
-		if (ss->sendPQCS == 0)
-		{
 			if (0 == InterlockedCompareExchange((LONG*)&ss->sendPQCS, 1, 0))
 			{
+				InterlockedIncrement(&(ss->iocpCount));
 				PostQueuedCompletionStatus(hcp, 0, (ULONG_PTR)ss, (LPOVERLAPPED)1);
 			}
-		}
 	}
 
 	releaseLock(ss);
@@ -212,8 +210,9 @@ unsigned __stdcall IOCPServer::acceptThread(LPVOID _data)
 			CreateIoCompletionPort((HANDLE)clientSock, server->hcp, (ULONG_PTR)ss, 0);	// iocp 등록
 			InterlockedIncrement(&server->clientCounter);
 			server->OnClinetJoin(ss->Index);
-			ss->recvFlag = true;
 			server->recvPost(ss);
+			if (0 == InterlockedDecrement(&(ss->iocpCount)))
+				server->disconnect(ss);
 		}
 		else
 			server->disconnect(clientSock);
@@ -252,9 +251,9 @@ unsigned __stdcall IOCPServer::workerThread(LPVOID _data)
 			if (1 == (int)over)
 			{
 				server->sendPost(_ss);
+				InterlockedDecrement((LONG*)&_ss->sendPQCS);
 				if (_ss->sendFlag == false && _ss->sendQ.getUsedSize() > 0)
 					server->sendPost(_ss);
-				InterlockedDecrement((LONG*)&_ss->sendPQCS);
 			}
 
 			if (&(_ss->recvOver) == over)
@@ -263,11 +262,8 @@ unsigned __stdcall IOCPServer::workerThread(LPVOID _data)
 			if (&(_ss->sendOver) == over)
 				server->completeSend(trans, _ss);
 
-			if (0 == _ss->recvFlag)
-			{
-				if (_ss->sendFlag == false && _ss->usingFlag == false && _ss->sendPQCS == false)
-					server->disconnect(_ss);
-			}
+			if (0 == InterlockedDecrement(&(_ss->iocpCount)))
+				server->disconnect(_ss);
 		}
 
 	}
@@ -281,10 +277,14 @@ Session* IOCPServer::insertSession(SOCKET _sock)
 	if (index == -1)
 		return NULL;
 
-	InterlockedExchange((LONG*)&sessionArr[index].disconnectFlag, 0);
+
 	sessionArr[index].Index = setID(index, netId);
 	netId++;
 	sessionArr[index].Sock = _sock;
+
+	InterlockedExchange(&sessionArr[index].sendFlag, false);
+	InterlockedExchange(&sessionArr[index].disconnectFlag, false);
+	InterlockedIncrement(&(sessionArr[index].iocpCount));
 
 	return &sessionArr[index];
 }
@@ -337,6 +337,7 @@ void IOCPServer::recvPost(Session *_ss)
 	// RECV 공간이 없는 경우 예외 처리 해주세요. 패킷자체가 문제가 있는것. 헤더의 길이가 잘못 됨
 	// 클라가 깨진 패킷을 쐈거나 누군가 공격을 하는 것 이므로 연결을 끊으세요. 중대한 에러입니다. 
 	recvVal = 0, flag = 0;
+	InterlockedIncrement(&(_ss->iocpCount));
 	retval = WSARecv(_ss->Sock, wbuf, 2, &recvVal, &flag, &(_ss->recvOver), NULL);
 
 	if (retval == SOCKET_ERROR)
@@ -345,7 +346,6 @@ void IOCPServer::recvPost(Session *_ss)
 		err = WSAGetLastError();
 		if (err != WSA_IO_PENDING)
 		{
-			_ss->recvFlag = false;
 			if (err != WSAECONNRESET && err != WSAESHUTDOWN && err != WSAECONNABORTED)
 			{
 				_SYSLOG(L"ERROR", Level::SYS_ERROR, L"RECV POST ERROR CODE : %d", err);
@@ -354,6 +354,8 @@ void IOCPServer::recvPost(Session *_ss)
 				OnError(0, errString);
 			}
 			clientShutdown(_ss);
+			if (0 == InterlockedDecrement(&(_ss->iocpCount)))
+				disconnect(_ss);
 		}
 	}
 }
@@ -398,9 +400,10 @@ void IOCPServer::sendPost(Session *_ss)
 		_ss->sendCount = count;
 		if (count == 0)
 		{
-			InterlockedExchange((LONG*)&(_ss->sendFlag), 0);
+			InterlockedExchange(&(_ss->sendFlag), false);
 			return;
 		}
+		InterlockedIncrement(&(_ss->iocpCount));
 		retval = WSASend(_ss->Sock, wbuf, _ss->sendCount, &sendVal, 0, &_ss->sendOver, NULL);
 		if (retval == SOCKET_ERROR)
 		{
@@ -415,8 +418,10 @@ void IOCPServer::sendPost(Session *_ss)
 					OnError(0, errString);
 				}
 				_ss->sendCount = 0;
+				InterlockedExchange(&(_ss->sendFlag), false);
 				clientShutdown(_ss);
-				InterlockedExchange((LONG*)&(_ss->sendFlag), 0);
+				if (0 == InterlockedDecrement(&(_ss->iocpCount)))
+					disconnect(_ss);
 				// 다른 스레드에서  sendPost를 호출하는 것을 막아보기 위해 shutdown함수 호출 다음에 sendFlag 변경
 			}
 		}
@@ -430,7 +435,6 @@ void IOCPServer::completeRecv(LONG _trans, Session *_ss)
 	if (_trans == 0)
 	{
 		clientShutdown(_ss);
-		_ss->recvFlag = false;
 		return;
 	}
 
@@ -487,9 +491,9 @@ void IOCPServer::completeSend(LONG _trans, Session *_ss)
 		}
 		InterlockedDecrement((LONG*)&(_ss->sendFlag));
 	}
-	if (_ss->sendQ.getUsedSize() == 0)
+	if (_ss->sendQ.getUsedSize() == 0 && _ss->sendDisconnectFlag)
 	{
-		if (1 == InterlockedCompareExchange((LONG*)&(_ss->sendDisconnectFlag), 1, 1))
+		if (false == InterlockedCompareExchange(&(_ss->disconnectFlag), true, false))
 			clientShutdown(_ss->Index);
 	}
 	sendPost(_ss);
@@ -497,7 +501,7 @@ void IOCPServer::completeSend(LONG _trans, Session *_ss)
 
 void IOCPServer::clientShutdown(Session *_ss)
 {
-	InterlockedExchange((LONG*)&_ss->disconnectFlag, 1);
+	InterlockedExchange(&_ss->disconnectFlag, 1);
 	shutdown(_ss->Sock, SD_BOTH);
 }
 
@@ -506,7 +510,7 @@ void IOCPServer::disconnect(Session *_ss)
 	ULONG64 dummyIndex = 0;
 	if (_ss->disconnectFlag == true)
 	{
-		if (1 == InterlockedCompareExchange((LONG*)&_ss->disconnectFlag, 1, 1))
+		if (true == InterlockedCompareExchange((LONG*)&_ss->disconnectFlag, true, true))
 		{
 			OnClientLeave(_ss->Index);
 			Sbuf *buf = NULL;
@@ -538,16 +542,16 @@ Session* IOCPServer::acquirLock(unsigned __int64 _Index)
 	__int64 index = getIndex(_Index);
 	Session *ss = &sessionArr[index];
 
-	if (1 == InterlockedCompareExchange((LONG*)&ss->usingFlag, 0, 1))
+	if (1 == InterlockedIncrement(&(ss->iocpCount)))
 	{
-		if (true == ss->disconnectFlag)
+		if (0 == InterlockedDecrement(&(ss->iocpCount)))
 			disconnect(ss);
 		return NULL;
 	}
 
 	if (ss->Index != _Index)
 	{
-		if (true == ss->disconnectFlag)
+		if (0 == InterlockedDecrement(&(ss->iocpCount)))
 			disconnect(ss);
 		return NULL;
 	}
@@ -565,8 +569,7 @@ Session* IOCPServer::acquirLock(unsigned __int64 _Index)
 
 void IOCPServer::releaseLock(Session *_ss)
 {
-	InterlockedExchange((LONG*)&_ss->usingFlag, 0);
-	if (true == _ss->disconnectFlag)
+	if (0 == InterlockedDecrement(&(_ss->iocpCount)))
 		disconnect(_ss);
 }
 
@@ -577,6 +580,7 @@ void IOCPServer::clientShutdown(unsigned __int64 _index)
 	{
 		InterlockedExchange((LONG*)&(_ss->disconnectFlag), 1);
 		shutdown(_ss->Sock, SD_BOTH);
+		releaseLock(_ss);
 	}
 	releaseLock(_ss);
 }

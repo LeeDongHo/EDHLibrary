@@ -409,7 +409,7 @@ void LanClient::disconnect()
 {
 	if (user->disconnectFlag == true)
 	{
-		if (false == InterlockedCompareExchange(&(user)->disconnectFlag, 1, 0))
+		if (InterlockedCompareExchange(&(user)->disconnectFlag, 0, 1))
 		{
 			OnClientLeave();
 			Sbuf *buf = NULL;
@@ -421,7 +421,7 @@ void LanClient::disconnect()
 				buf->Free();
 			}
 			closesocket(user->Sock);
-			user->Sock = INVALID_SOCKET;
+			user->Sock = socket(AF_INET, SOCK_STREAM, 0);
 			connectFlag = false;
 		}
 	}

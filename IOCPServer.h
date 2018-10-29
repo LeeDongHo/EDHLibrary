@@ -15,28 +15,27 @@ struct Session
 		Sock = INVALID_SOCKET;
 		Index = 0;
 
-		recvFlag = 0;
 		sendFlag = 0;
-		usingFlag = 0;
 		disconnectFlag = 0;
 		sendCount = 0;
 		sendDisconnectFlag = 0;
 		sendPQCS = 0;
 
+		iocpCount = 0;
 	}
 	SOCKET  Sock;
 	unsigned __int64 Index;
 
 	// IOCP 작업 관련 변수들
 	
-	volatile LONG recvFlag;				// Recv 중인지 체크. 
-	volatile LONG sendFlag;				// send 중인 지 체크.
-	volatile LONG usingFlag;				// 어떤 스레드에서 세션을 사용하고 있는지 체크.
-	volatile LONG disconnectFlag;	// disconnect 체크
+	LONG sendFlag;				// send 중인 지 체크.
+	LONG disconnectFlag;	// disconnect 체크
 
 	LONG sendCount;				// send한 직렬화 버퍼의 수 
-	volatile LONG sendDisconnectFlag;	// 보내고 끊기 체크
-	volatile LONG sendPQCS;				// PQCS를 이용해서 SEND 함수 호출시 호출여부 체크
+	LONG sendDisconnectFlag;	// 보내고 끊기 체크
+	LONG sendPQCS;				// PQCS를 이용해서 SEND 함수 호출시 호출여부 체크
+
+	LONG iocpCount;
 
 	winBuffer recvQ;
 	lockFreeQueue<Sbuf*> sendQ;
