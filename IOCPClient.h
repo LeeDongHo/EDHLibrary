@@ -111,12 +111,13 @@ protected:
 	int		GetClientCount(void);	// 미정
 	void	SendPacket(unsigned __int64 _index, Sbuf *_buf, bool _type = false);
 
-	void clientShutdown(unsigned __int64 _index);		// 자식 클래스에서 호출하는 함수 
+	void clientShutdown(unsigned __int64 _Index);		// 자식 클래스에서 호출하는 함수 
 
-	virtual void OnClinetJoin(unsigned __int64 _index) = 0;	// accept -> 접속처리 완료 후 호출
-	virtual void OnClientLeave(unsigned __int64 _index) = 0;		// disconnect 후 호출
+	virtual void OnClientJoin(unsigned __int64 _Index) = 0;	// accept -> 접속처리 완료 후 호출
+	virtual void OnClientLeave(unsigned __int64 _Index) = 0;		// disconnect 후 호출
 	virtual bool OnConnectionRequest(char *_ip, unsigned int _port) = 0; // accept 후 [false : 클라이언트 거부 / true : 접속 허용]
-	virtual void OnRecv(unsigned __int64 _index, Sbuf *_buf) = 0;		// 수신 완료 후
+	virtual void OnRecv(unsigned __int64 _Index, Sbuf *_buf) = 0;		// 수신 완료 후
+
 	virtual void OnError(int _errorCode, WCHAR *_string) = 0;		// 오류메세지 전송
 
 };

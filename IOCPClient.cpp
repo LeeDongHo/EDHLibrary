@@ -21,11 +21,11 @@ bool IOCPClient::Start(char *_ip, unsigned short _port, unsigned short _threadCo
 
 
 	// bind()
-	ZeroMemory(&addr, sizeof(addr));
+		ZeroMemory(&addr, sizeof(addr));
 
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = inet_addr(_ip);
-	addr.sin_port = htons(_port);
+		addr.sin_family = AF_INET;
+		addr.sin_addr.s_addr = inet_addr(_ip);
+		addr.sin_port = htons(_port);
 
 	// Keep Alive option setting
 	tcpKeep.onoff = 1;
@@ -216,7 +216,7 @@ unsigned __stdcall IOCPClient::connectThread(LPVOID _data)
 	return 0;
 }
 
-unsigned __stdcall IOCPClient::3Thread(LPVOID _data)
+unsigned __stdcall IOCPClient::Thread(LPVOID _data)
 {
 	IOCPClient *server = (IOCPClient*)_data;
 

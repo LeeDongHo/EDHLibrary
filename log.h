@@ -8,6 +8,7 @@
 #include <strsafe.h>
 
 #define _SYSLOG(_type, _level, _string, ...) systemLog::sysLog(_type,_level,_string, __VA_ARGS__)
+#define _DEBUGLOG(_type, _funcName, _string, ...) systemLog::debugLog(_type,_funcName,_string, __VA_ARGS__)
 
 	enum Level
 	{
@@ -25,7 +26,7 @@ class systemLog
 	{
 	private:
 		static systemLog *log;
-		int logCounter;
+		volatile int logCounter;
 		WCHAR *folder;
 		Type type;
 		Level level;
@@ -51,11 +52,13 @@ class systemLog
 		}
 
 		void setSys(Type _Type, Level _level);
-		static void sysLog(WCHAR *_type, BYTE _level, WCHAR *_string, ...);
+		static void sysLog(Type _type, Level _level, WCHAR *_string, ...);
+		static void debugLog(WCHAR *_Type, WCHAR *_functionName, WCHAR *_string, ...);
+		void saveLog(Type _type, WCHAR *_string);
 		void saveLog(WCHAR *_type, WCHAR *_string);
 
-		void hexSave(WCHAR *_type, BYTE _level, BYTE *_pointer, BYTE _len);
-		void sessionSave(WCHAR *_type, BYTE _level, BYTE *_session);
+		void hexSave(Type _type, Level _level, BYTE *_pointer, BYTE _len);
+		void sessionSave(Type _type, Level _level, BYTE *_session);
 
 	};
 

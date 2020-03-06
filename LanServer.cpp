@@ -12,21 +12,21 @@ bool LanServer::Start(char *_ip, unsigned short _port, unsigned short _threadCou
 	WSADATA wsa;
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
 	{
-		OnError(0, L"윈속 초기화 에러");
+		onError(0, L"윈속 초기화 에러");
 		return false;
 	}
 
 	listenSock = socket(AF_INET, SOCK_STREAM, 0);
 	if (listenSock == INVALID_SOCKET)
 	{
-		OnError(0, L"LISTEN 에러");
+		onError(0, L"LISTEN 에러");
 		return false;
 	}
 
 	hcp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 	if (!hcp)
 	{
-		OnError(0, L"IOCP HANDLE CREATE ERROR");
+		onError(0, L"IOCP HANDLE CREATE ERROR");
 		return false;
 	}
 
@@ -43,15 +43,19 @@ bool LanServer::Start(char *_ip, unsigned short _port, unsigned short _threadCou
 	ZeroMemory(&serverAddr, sizeof(serverAddr));
 
 	serverAddr.sin_family = AF_INET;
-	//serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	serverAddr.sin_addr.s_addr = inet_addr(_ip);
+
+	if (strcmp("0.0.0.0", _ip) == 0)
+		serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	else
+		inet_pton(AF_INET, _ip, &serverAddr.sin_addr);
+
 	serverAddr.sin_port = htons(_port);
 
 	int retval = bind(listenSock, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
 	if (retval == INVALID_SOCKET)
 	{
 		int err = WSAGetLastError();
-		OnError(err, L"BIND ERROR");
+		onError(err, L"BIND ERROR");
 		return false;
 	}
 
@@ -59,7 +63,7 @@ bool LanServer::Start(char *_ip, unsigned short _port, unsigned short _threadCou
 	retval = listen(listenSock, SOMAXCONN);
 	if (retval == INVALID_SOCKET)
 	{
-		OnError(0, L"LISTEN ERROR");
+		onError(0, L"LISTEN ERROR");
 		return false;
 	}
 
@@ -200,7 +204,7 @@ unsigned __stdcall LanServer::acceptThread(LPVOID _data)
 		ss = dummy->insertSession(clientSock);
 		CreateIoCompletionPort((HANDLE)clientSock, dummy->hcp, (ULONG_PTR)ss, 0);
 		InterlockedIncrement(&dummy->LANclientCounter);
-		dummy->OnClientJoin(ss->Index);
+		dummy->onClientJoin(ss->Index);
 		dummy->recvPost(ss);
 		if (0 == InterlockedDecrement(&(ss->iocpCount)))
 			dummy->disconnect(ss);
@@ -227,7 +231,7 @@ unsigned __stdcall LanServer::workerThread(LPVOID _data)
 		{
 			if (retval == false)
 			{
-				dummy->OnError(WSAGetLastError(), L"GQCS error : overlapped is NULL and return false");
+				dummy->onError(WSAGetLastError(), L"GQCS error : overlapped is NULL and return false");
 				break;
 			}
 			if (trans == 0 && !_ss)		// 종료 신호
@@ -350,7 +354,7 @@ void LanServer::recvPost(lanSession *_ss)
 			{
 				WCHAR errString[512] = L"";
 				wsprintf(errString, L"RECV ERROR [SESSION_ID : %d] : %d", _ss->Index, err);
-				OnError(0, errString);
+				onError(0, errString);
 			}
 			clientShutdown(_ss);
 			if (0 == InterlockedDecrement(&(_ss->iocpCount)))
@@ -414,7 +418,7 @@ void LanServer::sendPost(lanSession *_ss)
 				{
 					WCHAR errString[512] = L"";
 					wsprintf(errString, L"SEND ERROR [SESSION_ID : %d] : %d", _ss->Index, err);
-					OnError(0, errString);
+					onError(0, errString);
 				}
 				_ss->sendCount = 0;
 				InterlockedCompareExchange(&(_ss->sendFlag), FALSE, TRUE);
@@ -456,13 +460,13 @@ void LanServer::completeRecv(LONG _trans, lanSession *_ss)
 				retval = _recv->dequeue(buf->getDataPtr(), dataSize);
 				buf->moveRearPos(dataSize);
 				if (buf->lanDecode())
-					OnRecv(_ss->Index, buf);
+					onRecv(_ss->Index, buf);
 				buf->Free();
 			}
 			catch (int num)
 			{
 				if (num != 4900)
-					OnError(num, L"ERROR");
+					onError(num, L"ERROR");
 				return;
 			}
 		}
@@ -512,7 +516,7 @@ void LanServer::disconnect(lanSession *_ss)
 		if (true == InterlockedCompareExchange(&(_ss->disconnectFlag), false, true))
 		{
 			shutdown(_ss->Sock, SD_BOTH);
-			OnClientLeave(_ss->Index);
+			onClientLeave(_ss->Index);
 			Sbuf *buf = NULL;
 			InterlockedDecrement(&LANclientCounter);
 			while (1)

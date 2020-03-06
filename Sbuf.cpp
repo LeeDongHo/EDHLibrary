@@ -38,6 +38,7 @@ void Sbuf::clear()
 	frontPos = dataPos;
 	rearPos = dataPos;
 	encodeFlag = false;
+	buffer[0] = 0;
 }
 
 void Sbuf::lanClear()
@@ -118,6 +119,16 @@ int Sbuf::push(char* dest, int _size)
 	return _size;
 }
 
+int Sbuf::push(const char* dest, int _size)
+{
+	if (bufferSize - dataSize < _size)
+		throw 4960;
+	memcpy(rearPos, dest, _size);
+	rearPos += _size;
+	dataSize += _size;
+	return _size;
+}
+
 int Sbuf::pop(char* dest, int _size)
 {
 	if (_size > dataSize)
@@ -178,6 +189,12 @@ Sbuf& Sbuf::operator<<(WORD _value)
 	return *this;
 }
 
+Sbuf& Sbuf::operator<<(bool _value)
+{
+	push((char*)&_value, sizeof(bool));
+	return *this;
+}
+
 Sbuf& Sbuf::operator<<(int _value)
 {
 	push((char*)&_value, sizeof(int));
@@ -193,6 +210,12 @@ Sbuf& Sbuf::operator<<(DWORD _value)
 Sbuf& Sbuf::operator<<(float _value)
 {
 	push((char*)&_value, sizeof(float));
+	return *this;
+}
+
+Sbuf& Sbuf::operator<<(unsigned int _value)
+{
+	push((char*)&_value, sizeof(unsigned int));
 	return *this;
 }
 
@@ -241,6 +264,12 @@ Sbuf& Sbuf::operator >> (WORD &_value)
 	return *this;
 }
 
+Sbuf& Sbuf::operator >> (bool &_value)
+{
+	pop((char*)&_value, sizeof(bool));
+	return *this;
+}
+
 Sbuf& Sbuf::operator >> (int &_value)
 {
 	pop((char*)&_value, sizeof(int));
@@ -256,6 +285,12 @@ Sbuf& Sbuf::operator >> (DWORD &_value)
 Sbuf& Sbuf::operator >> (float &_value)
 {
 	pop((char*)&_value, sizeof(float));
+	return *this;
+}
+
+Sbuf& Sbuf::operator >> (unsigned int &_value)
+{
+	pop((char*)&_value, sizeof(unsigned int));
 	return *this;
 }
 

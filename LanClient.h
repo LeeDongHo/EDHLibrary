@@ -29,7 +29,8 @@ struct connectedClient
 	LONG iocpCount;
 
 	winBuffer recvQ;
-	lockFreeQueue<Sbuf*> sendQ;
+	boost::lockfree::queue<Sbuf*> sendQ;
+	boost::lockfree::queue<Sbuf*> completeSendQ;
 	OVERLAPPED recvOver, sendOver;
 };
 
@@ -43,7 +44,6 @@ private:
 	HANDLE hcp;	// IOCP HANDLE
 	HANDLE *threadArr;
 
-protected:
 	char ip[16];
 	IN_ADDR addr;
 	short port;
@@ -78,23 +78,19 @@ protected:
 	int precvTPS;
 
 protected:
-
-
-
-protected:
 	bool	Start(char *_ip, unsigned short _port, unsigned short _workerCount, bool _nagleOpt);
 	bool	Stop(void);					
 	void	SendPacket(Sbuf *_buf);
 
 	void setTPS(void);
 
-	virtual void OnClientJoin(void) = 0;
-	virtual void OnClientLeave(void) = 0;
-	virtual void OnRecv(Sbuf *_buf) = 0;
+	virtual void onClientJoin(void) = 0;
+	virtual void onClientLeave(void) = 0;
+	virtual void onRecv(Sbuf *_buf) = 0;
 
-	virtual void OnError(int _errorCode, WCHAR *_string) = 0;
+	virtual void onError(int _errorCode, WCHAR *_string) = 0;
 
-	virtual void OnTPS() = 0;
+	virtual void onTPS() = 0;
 
 public:
 	int getSendTPS(void);

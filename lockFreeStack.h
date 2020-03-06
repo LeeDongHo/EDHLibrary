@@ -40,7 +40,7 @@ public:
 	lockFreeStack();
 	~lockFreeStack();
 
-	void pop(T *data);
+	bool pop(T *data);
 	void push(T data);
 
 	int getUsedSize(void);
@@ -96,7 +96,7 @@ void lockFreeStack<T>::push(T data)
 }
 
 template <class T>
-void lockFreeStack<T>::pop(T *data)
+bool lockFreeStack<T>::pop(T *data)
 {
 	node *nodeNext;
 	TOP top;
@@ -107,7 +107,7 @@ void lockFreeStack<T>::pop(T *data)
 	alloc:
 		InterlockedIncrement(&usedSize);
 		data = NULL;
-		return;
+		return false;
 	}
 	else
 	{
@@ -122,6 +122,7 @@ void lockFreeStack<T>::pop(T *data)
 		*data = (top.node->data);
 		node = top.node;
 		pool->Free(node);	
+		return true;
 	}
 }
 

@@ -87,12 +87,12 @@ protected:
 
 	void clientShutdown(unsigned __int64 _id);
 
-	virtual void OnClientJoin(unsigned __int64 _id) = 0;	// accept -> 접속처리 완료 후 호출
-	virtual void OnClientLeave(unsigned __int64 _id) = 0;		// disconnect 후 호출
-	virtual void OnRecv(unsigned __int64 _id, Sbuf *_buf) = 0;		// 수신 완료 후
-	virtual void OnSend(unsigned __int64 _id, int _sendSize) = 0;	// 송신 완료 후
+	virtual void onClientJoin(unsigned __int64 _id) = 0;	// accept -> 접속처리 완료 후 호출
+	virtual void onClientLeave(unsigned __int64 _id) = 0;		// disconnect 후 호출
+	virtual void onRecv(unsigned __int64 _id, Sbuf *_buf) = 0;		// 수신 완료 후
+	virtual void onSend(unsigned __int64 _id, int _sendSize) = 0;	// 송신 완료 후
 
-	virtual void OnError(int _errorCode, WCHAR *_string) = 0;		// 오류메세지 전송
+	virtual void onError(int _errorCode, WCHAR *_string) = 0;		// 오류메세지 전송
 
 public:
 

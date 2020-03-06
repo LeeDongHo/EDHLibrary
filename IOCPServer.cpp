@@ -25,13 +25,6 @@ bool IOCPServer::Start(char *_ip, unsigned short _port, unsigned short _threadCo
 		return false;
 	}
 
-	// nagle check
-	if (_nagle == true)
-	{
-		bool optval = TRUE;
-		setsockopt(listenSock, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
-	}
-
 	// bind()
 	SOCKADDR_IN serverAddr;
 	IN_ADDR addr;
@@ -39,12 +32,19 @@ bool IOCPServer::Start(char *_ip, unsigned short _port, unsigned short _threadCo
 
 	serverAddr.sin_family = AF_INET;
 
-	//if (strcmp("0.0.0.0", _ip) == 0)
-	serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	//else
-//		serverAddr.sin_addr.s_addr = inet_addr(_ip);
+	if (strcmp("0.0.0.0", _ip) == 0)
+		serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	else
+		inet_pton(AF_INET, _ip, &addr);
 
 	serverAddr.sin_port = htons(_port);
+
+	bool optval = TRUE;
+	// nagle check
+	if (_nagle == true)
+		setsockopt(listenSock, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
+	// Set Reuseaddr option.
+	//setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
 
 	int retval = bind(listenSock, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
 	if (retval == INVALID_SOCKET)
@@ -65,7 +65,7 @@ bool IOCPServer::Start(char *_ip, unsigned short _port, unsigned short _threadCo
 	// 배열 설정
 	maxClient = _maxClient;
 	sessionArr = new Session[_maxClient];
-	indexStack = new lockFreeStack<unsigned __int64>;
+	indexStack = new boost::lockfree::stack<unsigned __int64>;
 	for (unsigned int i = 0; i < _maxClient; i++)
 	{
 		indexStack->push(i);
@@ -156,12 +156,12 @@ void IOCPServer::SendPacket(unsigned __int64 _index, Sbuf *_buf, bool _type)
 	int retval;
 	_buf->Encode(Code,Key1,Key2);
 	_buf->addRef();
-	ss->sendQ.enqueue(_buf);
+	ss->sendQ.push(_buf);
 
 	if (_type == true)
 	{
 		InterlockedCompareExchange((LONG*)&ss->sendDisconnectFlag, true, false);
-		if (ss->sendQ.getUsedSize() == 0)
+		if (ss->sendQ.empty())
 			clientShutdown(ss->Index);
 	}
 
@@ -188,6 +188,7 @@ unsigned __stdcall IOCPServer::acceptThread(LPVOID _data)
 	Session* ss = NULL;
 	int len;
 
+	int loopCount = 0;
 	while (1)
 	{
 		len = sizeof(clientAddr);
@@ -209,7 +210,7 @@ unsigned __stdcall IOCPServer::acceptThread(LPVOID _data)
 			ss = server->insertSession(clientSock);
 			CreateIoCompletionPort((HANDLE)clientSock, server->hcp, (ULONG_PTR)ss, 0);	// iocp 등록
 			InterlockedIncrement(&server->clientCounter);
-			server->OnClinetJoin(ss->Index);
+			server->OnClientJoin(ss->Index);
 			server->recvPost(ss);
 			if (0 == InterlockedDecrement(&(ss->iocpCount)))
 				server->disconnect(ss);
@@ -252,7 +253,7 @@ unsigned __stdcall IOCPServer::workerThread(LPVOID _data)
 			{
 				server->sendPost(_ss);
 				InterlockedDecrement((LONG*)&_ss->sendPQCS);
-				if (_ss->sendFlag == false && _ss->sendQ.getUsedSize() > 0)
+				if (_ss->sendFlag == false && _ss->sendQ.empty())
 					server->sendPost(_ss);
 			}
 
@@ -261,7 +262,6 @@ unsigned __stdcall IOCPServer::workerThread(LPVOID _data)
 
 			if (&(_ss->sendOver) == over)
 				server->completeSend(trans, _ss);
-
 			if (0 == InterlockedDecrement(&(_ss->iocpCount)))
 				server->disconnect(_ss);
 		}
@@ -273,10 +273,11 @@ unsigned __stdcall IOCPServer::workerThread(LPVOID _data)
 Session* IOCPServer::insertSession(SOCKET _sock)
 {
 	unsigned __int64 index;
-	indexStack->pop(&index);
+	indexStack->pop(index);
 	if (index == -1)
 		return NULL;
-
+	if(index == 0)
+		CCrashDump::Crash();
 
 	sessionArr[index].Index = setID(index, netId);
 	netId++;
@@ -348,7 +349,7 @@ void IOCPServer::recvPost(Session *_ss)
 		{
 			if (err != WSAECONNRESET && err != WSAESHUTDOWN && err != WSAECONNABORTED)
 			{
-				_SYSLOG(L"ERROR", Level::SYS_ERROR, L"RECV POST ERROR CODE : %d", err);
+				_SYSLOG(Type::Type_CONSOLE, Level::SYS_ERROR, L"RECV POST ERROR CODE : %d", err);
 				WCHAR errString[512] = L"";
 				wsprintf(errString, L"RECV ERROR [SESSION_ID : %d] : %d", _ss->Index, err);
 				OnError(0, errString);
@@ -370,9 +371,9 @@ void IOCPServer::sendPost(Session *_ss)
 	WSABUF wbuf[maxWSABUF];
 	wbuf[count].buf = 0;
 	wbuf[count].len = 0;
-	size = _ss->sendQ.getUsedSize();
-	if (size <= 0)
-		return;
+	boost::lockfree::queue<Sbuf*> *_send = &_ss->sendQ;
+	boost::lockfree::queue<Sbuf*> *completeSend = &_ss->completeSendQ;
+	if (_send->empty()) return;
 	if (0 == InterlockedCompareExchange(&(_ss->sendFlag), 1, 0))
 	{
 		_ss->sendCount = 0;
@@ -381,21 +382,21 @@ void IOCPServer::sendPost(Session *_ss)
 		int count = 0;
 		Sbuf *buf;
 		ZeroMemory(&_ss->sendOver, sizeof(_ss->sendOver));
-		lockFreeQueue<Sbuf*> *_send = &_ss->sendQ;
 		do
 		{
 			for (count; count < maxWSABUF; )
 			{
 				buf = NULL;
-				retval = _send->peek(&buf, count);
-				if (retval == -1 || !buf) break;
+				retval = _send->pop(buf);
+				if (retval == false || !buf) break;
 				wbuf[count].buf = buf->getHeaderPtr();
 				wbuf[count].len = buf->getPacketSize();
+				completeSend->push(buf);
 				count++;
 			}
 			if (count >= maxWSABUF)
 				break;
-		} while (_send->getUsedSize() > count);
+		} while (!_send->empty());
 
 		_ss->sendCount = count;
 		if (count == 0)
@@ -412,7 +413,7 @@ void IOCPServer::sendPost(Session *_ss)
 			{
 				if (err != WSAECONNRESET && err != WSAESHUTDOWN && err != WSAECONNABORTED)
 				{
-					_SYSLOG(L"ERROR", Level::SYS_ERROR, L"SEND POST ERROR CODE : %d", err);
+					_SYSLOG(Type::Type_CONSOLE, Level::SYS_ERROR, L"SEND POST ERROR CODE : %d", err);
 					WCHAR errString[512] = L"";
 					wsprintf(errString, L"SEND ERROR [SESSION_ID : %d] : %d", _ss->Index, err);
 					OnError(0, errString);
@@ -437,14 +438,13 @@ void IOCPServer::completeRecv(LONG _trans, Session *_ss)
 		clientShutdown(_ss);
 		return;
 	}
-
 	winBuffer *_recv = &_ss->recvQ;
 	_recv->moveRearPos(_trans);
 	while (usedSize = _recv->getUsedSize())
 	{
 		netHeader head;
 		retval = _recv->peek((char*)&head, sizeof(netHeader));
-		if (retval == 0 || (usedSize - sizeof(netHeader)) < head.len)
+		if ((usedSize - sizeof(netHeader)) < head.len || retval == 0 )
 			break;
 		InterlockedIncrement(&recvTPS);
 		try
@@ -461,8 +461,7 @@ void IOCPServer::completeRecv(LONG _trans, Session *_ss)
 		catch (int num)
 		{
 			if (num != 4900)
-				_SYSLOG(L"SYSTEM", Level::SYS_ERROR, L"에러코드 : %d", num);
-			return;
+				_SYSLOG(Type::Type_CONSOLE, Level::SYS_ERROR, L"에러코드 : %d", num);
 		}
 	}
 	recvPost(_ss);
@@ -479,19 +478,20 @@ void IOCPServer::completeSend(LONG _trans, Session *_ss)
 	else
 	{
 		Sbuf *buf;
-		lockFreeQueue<Sbuf*> *_send = &_ss->sendQ;
+		boost::lockfree::queue<Sbuf*> *completeSend = &_ss->completeSendQ;
 		for (int i = 0; i < _ss->sendCount;)
 		{
 			buf = NULL;
-			_send->dequeue(&buf);
+			completeSend->pop(buf);
 			if (!buf) continue;
 			buf->Free();
 			i++;
 			InterlockedIncrement(&sendTPS);
 		}
 		InterlockedDecrement((LONG*)&(_ss->sendFlag));
+		_ss->sendCount = 0;
 	}
-	if (_ss->sendQ.getUsedSize() == 0 && _ss->sendDisconnectFlag)
+	if (_ss->sendQ.empty() && _ss->sendDisconnectFlag)
 	{
 		if (false == InterlockedCompareExchange(&(_ss->disconnectFlag), true, false))
 			clientShutdown(_ss->Index);
@@ -508,23 +508,33 @@ void IOCPServer::clientShutdown(Session *_ss)
 void IOCPServer::disconnect(Session *_ss)
 {
 	ULONG64 dummyIndex = 0;
-	if (_ss->disconnectFlag == true)
+	if (true == InterlockedCompareExchange((LONG*)&_ss->disconnectFlag, false, true))
 	{
-		if (true == InterlockedCompareExchange((LONG*)&_ss->disconnectFlag, true, true))
+		if (0 == InterlockedCompareExchange((LONG*)&_ss->iocpCount, 0, 0))
 		{
 			OnClientLeave(_ss->Index);
 			Sbuf *buf = NULL;
 			InterlockedDecrement(&clientCounter);
+			_ss->sendCount = 0;
 			while (1)
 			{
 				buf = NULL;
-				_ss->sendQ.dequeue(&buf);
+				_ss->completeSendQ.pop(buf);
 				if (!buf) break;
 				buf->Free();
 			}
+			while (1)
+			{
+				buf = NULL;
+				_ss->sendQ.pop(buf);
+				if (!buf) break;
+				buf->Free();
+			}
+			dummyIndex = _ss->Index;
+			if (dummyIndex == 0 || getIndex(dummyIndex) == 0)
+				CCrashDump::Crash();
 			closesocket(_ss->Sock);
 			_ss->Sock = INVALID_SOCKET;
-			dummyIndex = _ss->Index;
 			_ss->Index = 0;
 			indexStack->push(getIndex(dummyIndex));
 		}
@@ -541,7 +551,6 @@ Session* IOCPServer::acquirLock(unsigned __int64 _Index)
 {
 	__int64 index = getIndex(_Index);
 	Session *ss = &sessionArr[index];
-
 	if (1 == InterlockedIncrement(&(ss->iocpCount)))
 	{
 		if (0 == InterlockedDecrement(&(ss->iocpCount)))
@@ -558,7 +567,8 @@ Session* IOCPServer::acquirLock(unsigned __int64 _Index)
 
 	if (true == ss->disconnectFlag)
 	{
-		disconnect(ss);
+		if (0 == InterlockedDecrement(&(ss->iocpCount)))
+			disconnect(ss);
 		return NULL;
 	}
 
@@ -582,5 +592,4 @@ void IOCPServer::clientShutdown(unsigned __int64 _index)
 		shutdown(_ss->Sock, SD_BOTH);
 		releaseLock(_ss);
 	}
-	releaseLock(_ss);
 }

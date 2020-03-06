@@ -22,7 +22,7 @@ void systemLog::setSys(Type _Type, Level _level)
 
 }
 
-void systemLog::sysLog(WCHAR *_type, BYTE _level, WCHAR *_string, ...)
+void systemLog::sysLog(Type _type, Level _level, WCHAR *_string, ...)
 {
 	systemLog* log = getInstance();
 	if (_level > log->level)
@@ -40,13 +40,38 @@ void systemLog::sysLog(WCHAR *_type, BYTE _level, WCHAR *_string, ...)
 	}
 	va_end(vs);
 
-	wsprintf(parameter, L"[%s / %d / %06d] : %s\n", _type, _level,log->logCounter, dummy);
+	wsprintf(parameter, L"[%d / %d / %06d] : %s\n", _type, _level,log->logCounter, dummy);
 	log->saveLog(_type, parameter);
 	log->logCounter++;
 	return;
 }
 
-void systemLog::saveLog(WCHAR *_type, WCHAR *_string)
+void systemLog::debugLog(WCHAR *_Type, WCHAR *_functionName, WCHAR *_String, ...)
+{
+	systemLog* log = getInstance();
+	
+	if (!_Type || !_functionName) return;
+
+	WCHAR parameter[512];
+	WCHAR dummy[256];
+
+	va_list vs;
+	va_start(vs, _String);
+	HRESULT result = StringCchVPrintf(dummy, 256, _String, vs);
+	if (result != S_OK)
+	{
+		wprintf(L"VA_LIST ERROR [%s / %s] : %s\n", _Type, _functionName, _String);
+		return;
+	}
+	va_end(vs);
+
+	wsprintf(parameter, L"%s] %s\n", _functionName, dummy);
+	log->saveLog(_Type, parameter);
+	log->logCounter++;
+	return;
+}
+
+void systemLog::saveLog(Type _type, WCHAR *_string)
 {
 	int err;
 	_wmkdir(folder);
@@ -56,7 +81,7 @@ void systemLog::saveLog(WCHAR *_type, WCHAR *_string)
 	__time64_t time;
 	_time64(&time);
 	localtime_s(&asdf, &time);
-	wsprintf(fileName, L"%s\\[%s]%04d%02d.txt", folder, _type, asdf.tm_year + 1900, asdf.tm_mon + 1);
+	wsprintf(fileName, L"%s\\[%d]%04d%02d.txt", folder, _type, asdf.tm_year + 1900, asdf.tm_mon + 1);
 
 	FILE *fp;
 	fileOpen:
@@ -85,7 +110,46 @@ void systemLog::saveLog(WCHAR *_type, WCHAR *_string)
 	return;
 }
 
-void systemLog::hexSave(WCHAR *_type, BYTE _level, BYTE *_pointer, BYTE _len)
+void systemLog::saveLog(WCHAR *_type, WCHAR *_string)
+{
+	int err;
+	_wmkdir(folder);
+	WCHAR fileName[256] = L"";
+	char dummy[512];
+	tm asdf;
+	__time64_t time;
+	_time64(&time);
+	localtime_s(&asdf, &time);
+	wsprintf(fileName, L"%s\\[%s]%04d%02d.txt", folder, _type, asdf.tm_year + 1900, asdf.tm_mon + 1);
+
+	FILE *fp;
+fileOpen:
+	_wfopen_s(&fp, fileName, L"a");
+	if (!fp)
+	{
+		err = GetLastError();
+		if (err == 32) goto fileOpen;
+		printf("FILE_OPEN ERROR : %d\n", err);
+		fclose(fp);
+		logCounter--;
+		return;
+	}
+	WideCharToMultiByte(CP_UTF8, 0, _string, 512, dummy, 512, 0, 0);
+	//size_t result = fwrite(_string, 512, 512, fp);
+	size_t result = fprintf(fp, "%s", dummy);
+	if (result == 0)
+	{
+		err = GetLastError();
+		printf("FILE_WRITE ERROR : %d\n", err);
+		fclose(fp);
+		logCounter--;
+		return;
+	}
+	fclose(fp);
+	return;
+}
+
+void systemLog::hexSave(Type _type, Level _level, BYTE *_pointer, BYTE _len)
 {
 	if (_level > level)
 		return;
@@ -103,7 +167,7 @@ void systemLog::hexSave(WCHAR *_type, BYTE _level, BYTE *_pointer, BYTE _len)
 	saveLog(_type, dummy);
 }
 
-void systemLog::sessionSave(WCHAR *_type, BYTE _level, BYTE *_session)
+void systemLog::sessionSave(Type _type, Level _level, BYTE *_session)
 {
 	if (_level > level)
 		return;

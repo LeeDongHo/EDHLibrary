@@ -12,21 +12,21 @@ bool LanClient::Start(char *_ip, unsigned short _port, unsigned short _workerCou
 	WSADATA wsa;
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
 	{
-		OnError(0, L"윈속 초기화 에러");
+		onError(0, L"윈속 초기화 에러");
 		return false;
 	}
 
 	user->Sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (user->Sock == INVALID_SOCKET)
 	{
-		OnError(0, L"SOCKET 에러");
+		onError(0, L"SOCKET 에러");
 		return false;
 	}
 
 	hcp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 	if (!hcp)
 	{
-		OnError(0, L"IOCP HANDLE CREATE ERROR");
+		onError(0, L"IOCP HANDLE CREATE ERROR");
 		return false;
 	}
 
@@ -80,19 +80,19 @@ bool LanClient::Stop(void)
 
 
 	// disconnect;
-	printf("session disconnet waiting...\n");
+	printf("Lan session disconnet waiting...\n");
 	disconnect();
-	printf("session disconnet success\n");
+	printf("Lan session disconnet success\n");
 
 	// worker 스레드 종료
 	int j = 0;
 	for (j; j < workerCount; j++)
-		PostQueuedCompletionStatus(threadArr[j], 0, 0, 0);
+		PostQueuedCompletionStatus(hcp, 0, 0, 0);
 
 
 	// 대기 : 모든 스레드가 종료 될 때 까지
 	WaitForMultipleObjects(workerCount, threadArr, TRUE, INFINITE);
-	printf("Net thread is closed\n");
+	printf("Lan worker thread is closed\n");
 
 	int z = 0;
 	for (z; z < workerCount; z++)
@@ -109,21 +109,18 @@ void LanClient::SendPacket(Sbuf *_buf)
 {
 	_buf->lanEncode();
 	_buf->addRef();
-	user->sendQ.enqueue(_buf);
+	user->sendQ.push(_buf);
 
 	if (user->sendFlag == false)
 		sendPost(user);
 }
-
-// private 
-
-
 
 unsigned __stdcall LanClient::connectThread(LPVOID _data)
 {
 	LanClient *client = (LanClient*)_data;
 	SOCKADDR_IN serverAddr = client->server;
 	int retval = 0;
+	int errorCode = 0;
 	connectedClient *User = client->user;
 	SOCKET sock = User->Sock;
 	while (1)
@@ -137,14 +134,15 @@ unsigned __stdcall LanClient::connectThread(LPVOID _data)
 			retval = connect(sock, (SOCKADDR*)&serverAddr, sizeof(serverAddr));
 			if (retval == SOCKET_ERROR)
 			{
-				client->OnError(WSAGetLastError(), L"Connect error");
+				errorCode = WSAGetLastError();
+				_SYSLOG(Type::Type_CONSOLE, Level::SYS_ERROR, L"CONNECT ERROR CODE : %d", errorCode);
 				continue;
 			}
 			client->connectFlag = true;
 			User->Sock = sock;
 			CreateIoCompletionPort((HANDLE)sock, client->hcp, (ULONG_PTR)client->user, 0);
 			InterlockedIncrement(&(User->iocpCount));
-			client->OnClientJoin();
+			client->onClientJoin();
 			client->recvPost(User);
 
 			if (0 == InterlockedDecrement(&(User->iocpCount)))
@@ -174,7 +172,7 @@ unsigned __stdcall LanClient::workerThread(LPVOID _data)
 		{
 			if (retval == false)
 			{
-				client->OnError(WSAGetLastError(), L"GQCS error : overlapped is NULL and return false");
+				client->onError(WSAGetLastError(), L"GQCS error : overlapped is NULL and return false");
 				break;
 			}
 			if (trans == 0 && !User)		// 종료 신호
@@ -203,7 +201,7 @@ unsigned __stdcall LanClient::tpsThread(LPVOID _data)
 	while (1)
 	{
 		if (client->quit) break;
-		client->OnTPS();
+		client->onTPS();
 		client->psendTPS = client->getSendTPS();
 		client->precvTPS = client->getRecvTPS();
 		client->setTPS();
@@ -213,7 +211,7 @@ unsigned __stdcall LanClient::tpsThread(LPVOID _data)
 }
 
 int LanClient::getSendTPS(void)
-{
+{	
 	return sendTPS;
 }
 
@@ -260,7 +258,7 @@ void LanClient::recvPost(connectedClient *_User)
 		{
 			if (err != WSAECONNRESET && err != WSAESHUTDOWN && err != WSAECONNABORTED)
 			{
-				OnError(err, L"RECV ERROR");
+				onError(err, L"RECV ERROR");
 			}
 			clientShutdown();
 			if (0 == InterlockedDecrement(&(_User->iocpCount)))
@@ -279,9 +277,9 @@ void LanClient::sendPost(connectedClient *_User)
 	WSABUF buf[maxWSABUF];
 	buf[count].buf = 0;
 	buf[count].len = 0;
-	size = _User->sendQ.getUsedSize();
-	if (size <= 0)
-		return;
+	boost::lockfree::queue<Sbuf*> *Send = &_User->sendQ;
+	boost::lockfree::queue<Sbuf*> *completeSend = &_User->completeSendQ;
+	if (Send->empty()) return;
 	if (FALSE == (BOOL)InterlockedCompareExchange(&(_User->sendFlag), TRUE, FALSE))
 	{
 		_User->sendCount = 0;
@@ -290,21 +288,21 @@ void LanClient::sendPost(connectedClient *_User)
 		int count = 0;
 		Sbuf *storedBuf;
 		ZeroMemory(&_User->sendOver, sizeof(_User->sendOver));
-		lockFreeQueue<Sbuf*> *_send = &_User->sendQ;
 		do
 		{
 			for (count; count < maxWSABUF; )
 			{
 				storedBuf = NULL;
-				retval = _send->peek(&storedBuf, count);
+				retval = Send->pop(storedBuf);
 				if (retval == -1 || !storedBuf) break;
 				buf[count].buf = storedBuf->getHeaderPtr();
 				buf[count].len = storedBuf->getPacketSize();
+				completeSend->push(storedBuf);
 				count++;
 			}
 			if (count >= maxWSABUF)
 				break;
-		} while (_send->getUsedSize() > count);
+		} while (!Send->empty());
 
 		_User->sendCount = count;
 		if (count == 0)
@@ -320,7 +318,7 @@ void LanClient::sendPost(connectedClient *_User)
 			if (err != WSA_IO_PENDING)
 			{
 				if (err != WSAECONNRESET && err != WSAESHUTDOWN && err != WSAECONNABORTED)
-					OnError(err, L"SEND ERROR");
+					onError(err, L"SEND ERROR");
 				
 				_User->sendCount = 0;
 				InterlockedCompareExchange(&(_User->sendFlag), FALSE, TRUE);
@@ -360,7 +358,7 @@ void LanClient::completeRecv(LONG _trans, connectedClient *_User)
 				retval = _recv->dequeue(buf->getDataPtr(),dataSize);
 				buf->moveRearPos(dataSize);
 				if(buf->lanDecode())
-					OnRecv(buf);
+					onRecv(buf);
 				buf->Free();
 			}
 			catch (int num)
@@ -384,11 +382,11 @@ void LanClient::completeSend(LONG _trans, connectedClient *_User)
 	else
 	{
 		Sbuf *storedBuf;
-		lockFreeQueue<Sbuf*> *_send = &_User->sendQ;
+		boost::lockfree::queue<Sbuf*> *completeSend = &_User->completeSendQ;
 		for (int i = 0; i < _User->sendCount;)
 		{
 			storedBuf = NULL;
-			_send->dequeue(&storedBuf);
+			completeSend->pop(storedBuf);
 			if (!storedBuf) continue;
 			storedBuf->Free();
 			i++;
@@ -411,12 +409,12 @@ void LanClient::disconnect()
 	{
 		if (InterlockedCompareExchange(&(user)->disconnectFlag, 0, 1))
 		{
-			OnClientLeave();
+			onClientLeave();
 			Sbuf *buf = NULL;
 			while (1)
 			{
 				buf = NULL;
-				user->sendQ.dequeue(&buf);
+				user->sendQ.pop(buf);
 				if (!buf) break;
 				buf->Free();
 			}
